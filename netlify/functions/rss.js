@@ -1,16 +1,19 @@
+import { parseStringPromise } from "xml2js";
+
 export async function handler() {
   const atomUrl = "https://www.gosswiler.com/feed/";
   const atomText = await fetch(atomUrl).then(r => r.text());
 
-  const parser = new DOMParser();
-  const atom = parser.parseFromString(atomText, "text/xml");
-  const entries = [...atom.getElementsByTagName("entry")];
+  // ATOM → JS-Objekt
+  const atom = await parseStringPromise(atomText);
+
+  const entries = atom.feed.entry || [];
 
   const items = entries.map(entry => {
-    const title = entry.getElementsByTagName("title")[0]?.textContent || "";
-    const summary = entry.getElementsByTagName("summary")[0]?.textContent || "";
-    const link = entry.querySelector('link[rel="alternate"]')?.getAttribute("href") || "";
-    const image = entry.getElementsByTagName("media:content")[0]?.getAttribute("url") || "";
+    const title = entry.title?.[0] || "";
+    const summary = entry.summary?.[0] || "";
+    const link = entry.link?.find(l => l.$.rel === "alternate")?.$.href || "";
+    const image = entry["media:content"]?.[0]?.$.url || "";
 
     return `
       <item>
