@@ -1,40 +1,45 @@
 export async function handler() {
-  const atomUrl = "https://www.gosswiler.com/feed/";
-  const atomText = await fetch(atomUrl).then(r => r.text());
+  const rssUrl = "https://www.gosswiler.com/feed/";
+  const rssText = await fetch(rssUrl).then(r => r.text());
 
-  // Minimaler XML-Parser für Node (DOMParser existiert nicht)
-  const parseTag = (xml, tag) => {
+  // Minimaler XML-Parser
+  const extractAll = (xml, tag) => {
     const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "g");
-    const matches = [...xml.matchAll(regex)];
-    return matches.map(m => m[1].trim());
+    return [...xml.matchAll(regex)].map(m => m[1].trim());
   };
 
-  const parseAttribute = (xml, tag, attr) => {
-    const regex = new RegExp(`<${tag}[^>]*${attr}="([^"]+)"[^>]*>`, "g");
-    const matches = [...xml.matchAll(regex)];
-    return matches.map(m => m[1]);
+  const extractOne = (xml, tag) => {
+    const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`);
+    const match = xml.match(regex);
+    return match ? match[1].trim() : "";
   };
 
-  // Einträge extrahieren
-  const entries = atomText.split("<entry>").slice(1).map(e => "<entry>" + e);
+  const extractImage = xml => {
+    // WordPress liefert oft <media:content url="...">
+    const media = xml.match(/<media:content[^>]*url="([^"]+)"/);
+    if (media) return media[1];
 
-  const items = entries.map(entry => {
-    const title = parseTag(entry, "title")[0] || "";
-    const summary = parseTag(entry, "summary")[0] || "";
+    // oder im content:encoded ein <img>
+    const img = xml.match(/<img[^>]*src="([^"]+)"/);
+    if (img) return img[1];
 
-    // Link mit rel="alternate"
-    const linkMatch = entry.match(/<link[^>]*rel="alternate"[^>]*href="([^"]+)"/);
-    const link = linkMatch ? linkMatch[1] : "";
+    return "";
+  };
 
-    // Bild aus media:content
-    const imageMatch = entry.match(/<media:content[^>]*url="([^"]+)"/);
-    const image = imageMatch ? imageMatch[1] : "";
+  // Alle <item>-Blöcke extrahieren
+  const itemsRaw = extractAll(rssText, "item");
+
+  const items = itemsRaw.map(item => {
+    const title = extractOne(item, "title");
+    const description = extractOne(item, "description");
+    const link = extractOne(item, "link");
+    const image = extractImage(item);
 
     return `
       <item>
         <title><![CDATA[${title}]]></title>
         <link>${link}</link>
-        <description><![CDATA[${summary}]]></description>
+        <description><![CDATA[${description}]]></description>
         ${image ? `<enclosure url="${image}" type="image/jpeg" />` : ""}
       </item>
     `;
