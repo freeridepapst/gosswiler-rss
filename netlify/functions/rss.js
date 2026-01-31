@@ -1,26 +1,41 @@
-import { parseStringPromise } from "xml2js";
-
 export async function handler() {
   const atomUrl = "https://www.gosswiler.com/feed/";
   const atomText = await fetch(atomUrl).then(r => r.text());
 
-  // ATOM → JS-Objekt
-  const atom = await parseStringPromise(atomText);
+  // Minimaler XML-Parser für Node (DOMParser existiert nicht)
+  const parseTag = (xml, tag) => {
+    const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "g");
+    const matches = [...xml.matchAll(regex)];
+    return matches.map(m => m[1].trim());
+  };
 
-  const entries = atom.feed.entry || [];
+  const parseAttribute = (xml, tag, attr) => {
+    const regex = new RegExp(`<${tag}[^>]*${attr}="([^"]+)"[^>]*>`, "g");
+    const matches = [...xml.matchAll(regex)];
+    return matches.map(m => m[1]);
+  };
+
+  // Einträge extrahieren
+  const entries = atomText.split("<entry>").slice(1).map(e => "<entry>" + e);
 
   const items = entries.map(entry => {
-    const title = entry.title?.[0] || "";
-    const summary = entry.summary?.[0] || "";
-    const link = entry.link?.find(l => l.$.rel === "alternate")?.$.href || "";
-    const image = entry["media:content"]?.[0]?.$.url || "";
+    const title = parseTag(entry, "title")[0] || "";
+    const summary = parseTag(entry, "summary")[0] || "";
+
+    // Link mit rel="alternate"
+    const linkMatch = entry.match(/<link[^>]*rel="alternate"[^>]*href="([^"]+)"/);
+    const link = linkMatch ? linkMatch[1] : "";
+
+    // Bild aus media:content
+    const imageMatch = entry.match(/<media:content[^>]*url="([^"]+)"/);
+    const image = imageMatch ? imageMatch[1] : "";
 
     return `
       <item>
         <title><![CDATA[${title}]]></title>
         <link>${link}</link>
         <description><![CDATA[${summary}]]></description>
-        <enclosure url="${image}" type="image/jpeg" />
+        ${image ? `<enclosure url="${image}" type="image/jpeg" />` : ""}
       </item>
     `;
   }).join("");
