@@ -17,11 +17,15 @@ export async function handler() {
     const link = item.link || "";
     const description = item.description || "";
     const image = item.thumbnail || "";
+    const pubDate = item.pubDate || new Date().toUTCString();
+    const guid = item.guid || link;
 
     return `
       <item>
         <title><![CDATA[${title}]]></title>
         <link>${link}</link>
+        <guid isPermaLink="true">${guid}</guid>
+        <pubDate>${pubDate}</pubDate>
         <description><![CDATA[${description}]]></description>
         ${image ? `<enclosure url="${image}" type="image/jpeg" />` : ""}
       </item>
