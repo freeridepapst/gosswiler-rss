@@ -2,10 +2,11 @@ export async function handler() {
   const atomUrl = "https://www.gosswiler.com/feed/";
   const atomText = await fetch(atomUrl).then(r => r.text());
 
-  // Hilfsfunktionen für ATOM
-  const extractEntries = xml => {
-    return xml.split("<entry>").slice(1).map(e => "<entry>" + e);
-  };
+  // Entfernt Namespaces wie <entry xmlns="...">
+  const cleanXml = atomText.replace(/xmlns(:\w+)?="[^"]*"/g, "");
+
+  // Alle <entry> Blöcke extrahieren
+  const entries = cleanXml.split("<entry>").slice(1).map(e => "<entry>" + e);
 
   const extractTag = (xml, tag) => {
     const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`);
@@ -27,9 +28,6 @@ export async function handler() {
 
     return "";
   };
-
-  // ATOM-Einträge extrahieren
-  const entries = extractEntries(atomText);
 
   const items = entries.map(entry => {
     const title = extractTag(entry, "title");
