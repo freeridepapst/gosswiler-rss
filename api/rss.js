@@ -2,67 +2,84 @@ import { load } from "cheerio";
 
 export default async function handler(req, res) {
   try {
-    // Startseite laden (Navigation ist serverseitig gerendert)
-    const url = "https://www.gosswiler.com/";
-    const html = await fetch(url).then(r => r.text());
-    const $ = load(html);
+    const sitemapUrl = "https://www.gosswiler.com/sitemap.xml";
+    const baseUrl = "https://www.gosswiler.com";
 
-    const items = [];
+    // 1) Sitemap laden
+    const sitemapXml = await fetch(sitemapUrl).then(r => r.text());
+    const $xml = load(sitemapXml, { xmlMode: true });
 
-    // Alle Blog-Einträge aus der Navigation extrahieren
-    $('li[data-options]').each((i, el) => {
-      const data = $(el).attr("data-options") || "";
-      const link = $(el).find("a").attr("href");
+    const blogs = [];
 
-      if (!link || !link.startsWith("/blog/")) return;
+    // 2) Alle <url>-Einträge durchgehen
+    $xml("url").each((i, el) => {
+      const loc = $xml(el).find("loc").text().trim();
+      const lastmod = $xml(el).find("lastmod").text().trim();
 
-      // Titel
-      const titleMatch = data.match(/title:(.*?);/);
-      const title = titleMatch ? titleMatch[1].trim() : "";
+      if (!loc.includes("/content/2.blog/")) return;
 
-      // Beschreibung
-      const descMatch = data.match(/description:(.*?);/s);
-      const description = descMatch ? descMatch[1].trim() : "";
+      // Beispiel: /content/2.blog/56.30-tage-sizilien-roadtrip/16-2.jpg
+      const match = loc.match(/\/2\.blog\/(\d+)\.([^/]+)\//);
+      if (!match) return;
 
-      // Bild
-      const previewMatch = data.match(/preview:(.*?);/);
-      const preview = previewMatch ? previewMatch[1].trim() : "";
+      const order = parseInt(match[1], 10);
+      const slug = match[2];
 
-      // Nummer aus dem Pfad extrahieren → bestimmt die Reihenfolge
-      // Beispiel: /content/2.blog/56.xyz/ → 56 = Reihenfolge
-      const orderMatch = preview.match(/\/2\.blog\/(\d+)\./);
-      const order = orderMatch ? parseInt(orderMatch[1], 10) : 0;
+      const folderKey = `${order}.${slug}`;
 
-      items.push({
-        title,
-        description,
-        link: "https://www.gosswiler.com" + link,
-        image: "https://www.gosswiler.com" + preview,
-        order
+      blogs.push({
+        folderKey,
+        order,
+        slug,
+        imagePath: loc,
+        lastmod: lastmod || null
       });
     });
 
-    if (items.length === 0) {
-      throw new Error("No blog items found");
+    if (blogs.length === 0) {
+      throw new Error("No blog entries found in sitemap");
     }
 
-    // Neuester Blog = höchste Nummer
-    const newest = items.sort((a, b) => b.order - a.order)[0];
+    // 3) Neuester Blog: höchste Nummer
+    blogs.sort((a, b) => b.order - a.order);
+    const newest = blogs[0];
 
+    const blogUrl = `${baseUrl}/blog/${newest.slug}/`;
+    const fallbackImage = newest.imagePath.startsWith("http")
+      ? newest.imagePath
+      : baseUrl + newest.imagePath;
+
+    // 4) Blog-Seite laden und OG-Meta auslesen
+    const blogHtml = await fetch(blogUrl).then(r => r.text());
+    const $ = load(blogHtml);
+
+    const ogTitle = $('meta[property="og:title"]').attr("content") || "";
+    const ogDescription = $('meta[property="og:description"]').attr("content") || "";
+    const ogImage = $('meta[property="og:image"]').attr("content") || fallbackImage;
+
+    const title = ogTitle || newest.slug;
+    const description = ogDescription || "";
+    const image = ogImage.startsWith("http") ? ogImage : baseUrl + ogImage;
+
+    const pubDate = newest.lastmod
+      ? new Date(newest.lastmod).toUTCString()
+      : new Date().toUTCString();
+
+    // 5) RSS bauen (nur ein Item: neuester Blog)
     const rss = `
       <rss version="2.0">
         <channel>
           <title><![CDATA[gosswiler.com – Blog]]></title>
-          <link>https://www.gosswiler.com/blog/</link>
+          <link>${baseUrl}/blog/</link>
           <description><![CDATA[Neuster Blog von gosswiler.com]]></description>
 
           <item>
-            <title><![CDATA[${newest.title}]]></title>
-            <link>${newest.link}</link>
-            <guid isPermaLink="true">${newest.link}</guid>
-            <pubDate>${new Date().toUTCString()}</pubDate>
-            <description><![CDATA[${newest.description}]]></description>
-            <enclosure url="${newest.image}" type="image/jpeg" />
+            <title><![CDATA[${title}]]></title>
+            <link>${blogUrl}</link>
+            <guid isPermaLink="true">${blogUrl}</guid>
+            <pubDate>${pubDate}</pubDate>
+            <description><![CDATA[${description}]]></description>
+            <enclosure url="${image}" type="image/jpeg" />
           </item>
 
         </channel>
@@ -70,8 +87,7 @@ export default async function handler(req, res) {
     `;
 
     res.setHeader("Content-Type", "application/xml");
-    res.status(200).send(rss);
-
+    res.status(200).send(rss.trim());
   } catch (err) {
     res.status(500).send("Error: " + err.message);
   }
