@@ -9,62 +9,45 @@ export default async function handler(req, res) {
     const sitemapXml = await fetch(sitemapUrl).then(r => r.text());
     const $xml = load(sitemapXml, { xmlMode: true });
 
-    const blogs = new Map(); // pro Blog-Ordner nur EIN Eintrag
+    const blogs = [];
 
     // 2) Alle <url>-Einträge durchgehen
     $xml("url").each((i, el) => {
       const loc = $xml(el).find("loc").text().trim();
       const lastmod = $xml(el).find("lastmod").text().trim();
 
-      if (!loc.includes("/content/2.blog/")) return;
+      // Nur echte Blog-Seiten
+      if (!loc.includes("/blog/")) return;
 
-      // Beispiel: /content/2.blog/56.slug/irgendwas.jpg
-      const match = loc.match(/\/2\.blog\/(\d+)\.([^/]+)\//);
-      if (!match) return;
-
-      const order = parseInt(match[1], 10);
-      const slug = match[2];
-
-      const key = `${order}.${slug}`;
-
-      // Nur den neuesten lastmod pro Blog-Ordner behalten
-      if (!blogs.has(key) || new Date(lastmod) > new Date(blogs.get(key).lastmod)) {
-        blogs.set(key, {
-          order,
-          slug,
-          imagePath: loc,
-          lastmod
-        });
-      }
+      blogs.push({
+        url: loc,
+        lastmod: lastmod || null
+      });
     });
 
-    if (blogs.size === 0) {
+    if (blogs.length === 0) {
       throw new Error("No blog entries found in sitemap");
     }
 
-    // 3) Neuester Blog = höchste Nummer
-    const newest = [...blogs.values()].sort((a, b) => b.order - a.order)[0];
+    // 3) Neuester Blog nach lastmod
+    blogs.sort((a, b) => new Date(b.lastmod) - new Date(a.lastmod));
+    const newest = blogs[0];
 
-    const blogUrl = `${baseUrl}/blog/${newest.slug}/`;
-    const fallbackImage = newest.imagePath.startsWith("http")
-      ? newest.imagePath
-      : baseUrl + newest.imagePath;
-
-    // 4) Blog-Seite laden und OG-Meta auslesen
-    const blogHtml = await fetch(blogUrl).then(r => r.text());
+    // 4) Blog-Seite laden
+    const blogHtml = await fetch(newest.url).then(r => r.text());
     const $ = load(blogHtml);
 
-    const ogTitle = $('meta[property="og:title"]').attr("content") || newest.slug;
-    const ogDescription = $('meta[property="og:description"]').attr("content") || "";
-    const ogImage = $('meta[property="og:image"]').attr("content") || fallbackImage;
-
+    // 5) OG-Meta auslesen
+    const title = $('meta[property="og:title"]').attr("content") || "Neuster Blog";
+    const description = $('meta[property="og:description"]').attr("content") || "";
+    const ogImage = $('meta[property="og:image"]').attr("content") || "";
     const image = ogImage.startsWith("http") ? ogImage : baseUrl + ogImage;
 
     const pubDate = newest.lastmod
       ? new Date(newest.lastmod).toUTCString()
       : new Date().toUTCString();
 
-    // 5) RSS bauen
+    // 6) RSS erzeugen
     const rss = `
       <rss version="2.0">
         <channel>
@@ -73,11 +56,11 @@ export default async function handler(req, res) {
           <description><![CDATA[Neuster Blog von gosswiler.com]]></description>
 
           <item>
-            <title><![CDATA[${ogTitle}]]></title>
-            <link>${blogUrl}</link>
-            <guid isPermaLink="true">${blogUrl}</guid>
+            <title><![CDATA[${title}]]></title>
+            <link>${newest.url}</link>
+            <guid isPermaLink="true">${newest.url}</guid>
             <pubDate>${pubDate}</pubDate>
-            <description><![CDATA[${ogDescription}]]></description>
+            <description><![CDATA[${description}]]></description>
             <enclosure url="${image}" type="image/jpeg" />
           </item>
 
