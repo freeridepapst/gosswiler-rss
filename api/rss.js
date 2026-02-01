@@ -1,3 +1,4 @@
+import { parseStringPromise } from "xml2js";
 import { load } from "cheerio";
 
 export default async function handler(req, res) {
@@ -6,44 +7,35 @@ export default async function handler(req, res) {
     const baseUrl = "https://www.gosswiler.com";
 
     // 1) Sitemap laden
-    let xml = await fetch(sitemapUrl).then(r => r.text());
+    const xml = await fetch(sitemapUrl).then(r => r.text());
 
-    // 2) Namespaces entfernen (wichtig!)
-    xml = xml
-      .replace(/xmlns(:\w+)?="[^"]*"/g, "")
-      .replace(/<\w+:(\w+)/g, "<$1")
-      .replace(/<\/\w+:(\w+)/g, "</$1");
+    // 2) XML korrekt parsen (xml2js ignoriert Namespaces automatisch)
+    const parsed = await parseStringPromise(xml);
 
-    const $xml = load(xml, { xmlMode: true });
+    // 3) Alle URL-Einträge extrahieren
+    const urls = parsed.urlset.url;
 
-    const blogs = [];
-
-    // 3) Alle <url>-Einträge durchgehen
-    $xml("url").each((i, el) => {
-      const loc = $xml(el).find("loc").text().trim();
-      const lastmod = $xml(el).find("lastmod").text().trim();
-
-      if (!loc.includes("/blog/")) return;
-
-      blogs.push({
-        url: loc,
-        lastmod: lastmod || null
-      });
-    });
+    // 4) Nur Blog-URLs filtern
+    const blogs = urls
+      .map(u => ({
+        loc: u.loc[0],
+        lastmod: u.lastmod ? u.lastmod[0] : null
+      }))
+      .filter(u => u.loc.includes("/blog/") && u.loc !== `${baseUrl}/blog/`);
 
     if (blogs.length === 0) {
       throw new Error("No blog entries found in sitemap");
     }
 
-    // 4) Neuester Blog nach lastmod
+    // 5) Neuester Blog nach lastmod
     blogs.sort((a, b) => new Date(b.lastmod) - new Date(a.lastmod));
     const newest = blogs[0];
 
-    // 5) Blog-Seite laden
-    const blogHtml = await fetch(newest.url).then(r => r.text());
+    // 6) Blog-Seite laden
+    const blogHtml = await fetch(newest.loc).then(r => r.text());
     const $ = load(blogHtml);
 
-    // 6) OG-Meta auslesen
+    // 7) OG-Meta auslesen
     const title = $('meta[property="og:title"]').attr("content") || "Neuster Blog";
     const description = $('meta[property="og:description"]').attr("content") || "";
     const ogImage = $('meta[property="og:image"]').attr("content") || "";
@@ -53,7 +45,7 @@ export default async function handler(req, res) {
       ? new Date(newest.lastmod).toUTCString()
       : new Date().toUTCString();
 
-    // 7) RSS erzeugen
+    // 8) RSS erzeugen
     const rss = `
       <rss version="2.0">
         <channel>
@@ -63,8 +55,8 @@ export default async function handler(req, res) {
 
           <item>
             <title><![CDATA[${title}]]></title>
-            <link>${newest.url}</link>
-            <guid isPermaLink="true">${newest.url}</guid>
+            <link>${newest.loc}</link>
+            <guid isPermaLink="true">${newest.loc}</guid>
             <pubDate>${pubDate}</pubDate>
             <description><![CDATA[${description}]]></description>
             <enclosure url="${image}" type="image/jpeg" />
