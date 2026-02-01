@@ -6,17 +6,23 @@ export default async function handler(req, res) {
     const baseUrl = "https://www.gosswiler.com";
 
     // 1) Sitemap laden
-    const sitemapXml = await fetch(sitemapUrl).then(r => r.text());
-    const $xml = load(sitemapXml, { xmlMode: true });
+    let xml = await fetch(sitemapUrl).then(r => r.text());
+
+    // 2) Namespaces entfernen (wichtig!)
+    xml = xml
+      .replace(/xmlns(:\w+)?="[^"]*"/g, "")
+      .replace(/<\w+:(\w+)/g, "<$1")
+      .replace(/<\/\w+:(\w+)/g, "</$1");
+
+    const $xml = load(xml, { xmlMode: true });
 
     const blogs = [];
 
-    // 2) Alle <url>-Einträge durchgehen
+    // 3) Alle <url>-Einträge durchgehen
     $xml("url").each((i, el) => {
       const loc = $xml(el).find("loc").text().trim();
       const lastmod = $xml(el).find("lastmod").text().trim();
 
-      // Nur echte Blog-Seiten
       if (!loc.includes("/blog/")) return;
 
       blogs.push({
@@ -29,15 +35,15 @@ export default async function handler(req, res) {
       throw new Error("No blog entries found in sitemap");
     }
 
-    // 3) Neuester Blog nach lastmod
+    // 4) Neuester Blog nach lastmod
     blogs.sort((a, b) => new Date(b.lastmod) - new Date(a.lastmod));
     const newest = blogs[0];
 
-    // 4) Blog-Seite laden
+    // 5) Blog-Seite laden
     const blogHtml = await fetch(newest.url).then(r => r.text());
     const $ = load(blogHtml);
 
-    // 5) OG-Meta auslesen
+    // 6) OG-Meta auslesen
     const title = $('meta[property="og:title"]').attr("content") || "Neuster Blog";
     const description = $('meta[property="og:description"]').attr("content") || "";
     const ogImage = $('meta[property="og:image"]').attr("content") || "";
@@ -47,7 +53,7 @@ export default async function handler(req, res) {
       ? new Date(newest.lastmod).toUTCString()
       : new Date().toUTCString();
 
-    // 6) RSS erzeugen
+    // 7) RSS erzeugen
     const rss = `
       <rss version="2.0">
         <channel>
