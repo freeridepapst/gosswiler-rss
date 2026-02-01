@@ -1,51 +1,80 @@
-import { parseStringPromise } from "xml2js";
-import { load } from "cheerio";
-
 export default async function handler(req, res) {
   try {
     const sitemapUrl = "https://www.gosswiler.com/sitemap.xml";
     const baseUrl = "https://www.gosswiler.com";
 
-    // 1) Sitemap laden
-    const xml = await fetch(sitemapUrl).then(r => r.text());
+    // 1) Sitemap streamen
+    const response = await fetch(sitemapUrl);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
 
-    // 2) XML korrekt parsen (xml2js ignoriert Namespaces automatisch)
-    const parsed = await parseStringPromise(xml);
+    let buffer = "";
+    const blogs = [];
 
-    // 3) Alle URL-Einträge extrahieren
-    const urls = parsed.urlset.url;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
 
-    // 4) Nur Blog-URLs filtern
-    const blogs = urls
-      .map(u => ({
-        loc: u.loc[0],
-        lastmod: u.lastmod ? u.lastmod[0] : null
-      }))
-      .filter(u => u.loc.includes("/blog/") && u.loc !== `${baseUrl}/blog/`);
+      buffer += decoder.decode(value, { stream: true });
+
+      // Solange vollständige <url>...</url> Blöcke vorhanden sind
+      let start, end;
+      while (
+        (start = buffer.indexOf("<url>")) !== -1 &&
+        (end = buffer.indexOf("</url>")) !== -1
+      ) {
+        const block = buffer.slice(start, end + 6);
+        buffer = buffer.slice(end + 6);
+
+        // loc extrahieren
+        const locMatch = block.match(/<loc>(.*?)<\/loc>/);
+        if (!locMatch) continue;
+
+        const loc = locMatch[1].trim();
+
+        // Nur echte Blog-Seiten (nicht /blog/ selbst)
+        if (!loc.includes("/blog/") || loc.endsWith("/blog/")) continue;
+
+        // lastmod extrahieren
+        const lastmodMatch = block.match(/<lastmod>(.*?)<\/lastmod>/);
+        const lastmod = lastmodMatch ? lastmodMatch[1].trim() : null;
+
+        blogs.push({ loc, lastmod });
+      }
+    }
 
     if (blogs.length === 0) {
       throw new Error("No blog entries found in sitemap");
     }
 
-    // 5) Neuester Blog nach lastmod
+    // 2) Neuester Blog nach lastmod
     blogs.sort((a, b) => new Date(b.lastmod) - new Date(a.lastmod));
     const newest = blogs[0];
 
-    // 6) Blog-Seite laden
-    const blogHtml = await fetch(newest.loc).then(r => r.text());
-    const $ = load(blogHtml);
+    // 3) Blog-Seite laden
+    const html = await fetch(newest.loc).then(r => r.text());
 
-    // 7) OG-Meta auslesen
-    const title = $('meta[property="og:title"]').attr("content") || "Neuster Blog";
-    const description = $('meta[property="og:description"]').attr("content") || "";
-    const ogImage = $('meta[property="og:image"]').attr("content") || "";
-    const image = ogImage.startsWith("http") ? ogImage : baseUrl + ogImage;
+    // OG-Meta per Regex extrahieren (kein Cheerio nötig)
+    const title =
+      html.match(/<meta property="og:title" content="(.*?)"/)?.[1] ||
+      "Neuster Blog";
+
+    const description =
+      html.match(/<meta property="og:description" content="(.*?)"/)?.[1] ||
+      "";
+
+    const ogImage =
+      html.match(/<meta property="og:image" content="(.*?)"/)?.[1] || "";
+
+    const image = ogImage.startsWith("http")
+      ? ogImage
+      : baseUrl + ogImage;
 
     const pubDate = newest.lastmod
       ? new Date(newest.lastmod).toUTCString()
       : new Date().toUTCString();
 
-    // 8) RSS erzeugen
+    // 4) RSS erzeugen
     const rss = `
       <rss version="2.0">
         <channel>
