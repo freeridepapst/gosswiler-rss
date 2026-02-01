@@ -2,7 +2,7 @@ import { load } from "cheerio";
 
 export default async function handler(req, res) {
   try {
-    const url = "https://www.gosswiler.com/blog/";
+    const url = "https://www.gosswiler.com/";
     const html = await fetch(url).then(r => r.text());
     const $ = load(html);
 
