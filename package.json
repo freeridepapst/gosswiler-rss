@@ -1,6 +1,8 @@
 {
-  "type": "module",
-  "dependencies": {
-    "cheerio": "^1.0.0"
-  }
+  "count": >0,
+  "entries": [
+    "/blog/xyz",
+    "/blog/abc"
+  ]
 }
+
