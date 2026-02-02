@@ -1,5 +1,7 @@
 {
-  "ok": false,
-  "error": "...",
-  "stack": "..."
+  "type": "module",
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "cheerio": "^1.0.0"
+  }
 }
