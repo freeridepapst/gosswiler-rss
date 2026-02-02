@@ -9,27 +9,27 @@ export default async function handler(req, res) {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
 
-    const xml = await response.text();
+    let xml = await response.text();
+
+    // 🔑 Namespace entfernen (DER Fix)
+    xml = xml.replace(/xmlns="[^"]+"/g, "");
 
     const $ = cheerio.load(xml, { xmlMode: true });
 
     const entries = [];
 
-    // 🔑 Namespace-agnostisch
-    $("*").each((_, el) => {
-      if (el.tagName === "url") {
-        const loc = $(el).find("loc").text();
-        const lastmod = $(el).find("lastmod").text();
+    $("url").each((_, el) => {
+      const loc = $(el).find("loc").text().trim();
+      const lastmod = $(el).find("lastmod").text().trim();
 
-        if (loc && loc.includes("/blog/")) {
-          entries.push({ loc, lastmod });
-        }
+      if (loc.includes("/blog/")) {
+        entries.push({ loc, lastmod });
       }
     });
 
     res.status(200).json({
       ok: true,
-      totalUrls: entries.length,
+      totalUrls: $("url").length,
       blogPosts: entries.length,
       sample: entries.slice(0, 3)
     });
