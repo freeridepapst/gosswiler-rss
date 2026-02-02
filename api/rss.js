@@ -15,18 +15,21 @@ export default async function handler(req, res) {
 
     const entries = [];
 
-    $("url").each((_, el) => {
-      const loc = $(el).find("loc").text();
-      const lastmod = $(el).find("lastmod").text();
+    // 🔑 Namespace-agnostisch
+    $("*").each((_, el) => {
+      if (el.tagName === "url") {
+        const loc = $(el).find("loc").text();
+        const lastmod = $(el).find("lastmod").text();
 
-      if (loc.includes("/blog/")) {
-        entries.push({ loc, lastmod });
+        if (loc && loc.includes("/blog/")) {
+          entries.push({ loc, lastmod });
+        }
       }
     });
 
     res.status(200).json({
       ok: true,
-      totalUrls: $("url").length,
+      totalUrls: entries.length,
       blogPosts: entries.length,
       sample: entries.slice(0, 3)
     });
