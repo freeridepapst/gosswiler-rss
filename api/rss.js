@@ -1,62 +1,75 @@
+import fetch from "node-fetch";
+import { XMLParser } from "fast-xml-parser";
+
+const SITE = "https://www.gosswiler.com";
+const SITEMAP = `${SITE}/sitemap.xml`;
+
 export default async function handler(req, res) {
-  // HARD disable all caching (critical for Brevo)
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
-  res.setHeader("Surrogate-Control", "no-store");
-
   try {
-    const sitemapUrl = "https://www.gosswiler.com/sitemap.xml";
+    const parser = new XMLParser();
 
-    const xml = await fetch(sitemapUrl).then(r => r.text());
+    async function loadSitemap(url) {
+      const xml = await fetch(url).then(r => r.text());
+      return parser.parse(xml);
+    }
 
-    // extract URLs + lastmod from sitemap
-    const urls = [...xml.matchAll(/<loc>(.*?)<\/loc>[\s\S]*?<lastmod>(.*?)<\/lastmod>/g)]
-      .map(m => ({
-        url: m[1],
-        lastmod: m[2]
-      }))
-      .filter(x => x.url.includes("/blog/") && !x.url.endsWith("/blog/"));
+    // Load main sitemap
+    const root = await loadSitemap(SITEMAP);
 
-    if (!urls.length) throw new Error("No blog entries found");
+    let urls = [];
 
-    // newest first
-    urls.sort((a, b) => new Date(b.lastmod) - new Date(a.lastmod));
+    // Case 1: sitemap index
+    if (root.sitemapindex?.sitemap) {
+      for (const sm of root.sitemapindex.sitemap) {
+        const child = await loadSitemap(sm.loc);
+        if (child.urlset?.url) {
+          urls.push(...child.urlset.url.map(u => u.loc));
+        }
+      }
+    }
 
-    const items = urls.slice(0, 20).map(post => {
-      const slug = post.url.split("/").filter(Boolean).pop();
-      const title = slug
-        .replace(/-/g, " ")
-        .replace(/\b\w/g, c => c.toUpperCase());
+    // Case 2: plain sitemap
+    if (root.urlset?.url) {
+      urls.push(...root.urlset.url.map(u => u.loc));
+    }
 
-      return `
+    // Filter blog posts
+    const blogPosts = urls.filter(u =>
+      u.includes("/blog/")
+    );
+
+    if (!blogPosts.length) {
+      throw new Error("No blog entries found");
+    }
+
+    blogPosts.sort((a, b) => new Date(b) - new Date(a));
+
+    const items = blogPosts.slice(0, 10).map(url => `
 <item>
-  <title><![CDATA[${title}]]></title>
-  <link>${post.url}</link>
-  <guid isPermaLink="true">${post.url}</guid>
-  <pubDate>${new Date(post.lastmod).toUTCString()}</pubDate>
-  <description><![CDATA[New blog post on gosswiler.com — click to read.]]></description>
-</item>`;
-    }).join("");
+<title>${url.split("/").filter(Boolean).pop().replace(/-/g," ")}</title>
+<link>${url}</link>
+<guid>${url}</guid>
+</item>
+`).join("");
 
     const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
 <title>Gosswiler Blog</title>
-<link>https://www.gosswiler.com/blog/</link>
-<description>Latest blog posts from gosswiler.com</description>
-<language>en</language>
+<link>${SITE}</link>
+<description>Latest blog posts</description>
 ${items}
 </channel>
 </rss>`;
 
-    res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
+    res.setHeader("Content-Type", "application/xml");
     res.status(200).send(rss);
 
-  } catch (err) {
+  } catch (e) {
+    console.error(e);
     res.status(500).json({
       ok: false,
-      error: err.message
+      error: e.message
     });
   }
 }
