@@ -1,102 +1,52 @@
-import { load } from "cheerio";
-
-/**
- * CONFIG
- */
-const SITEMAP_URL = "https://www.gosswiler.com/sitemap.xml";
-const SITE_TITLE = "Gosswiler Blog";
-const SITE_LINK = "https://www.gosswiler.com/blog/";
-const SITE_DESCRIPTION = "Latest blog posts from gosswiler.com";
-const LANGUAGE = "en";
-
-// Only include posts newer than X days (safety net)
-const MAX_AGE_DAYS = 120;
-// Max number of items in feed
-const MAX_ITEMS = 20;
-
-/**
- * Helpers
- */
-function humanizeSlug(slug) {
-  return slug
-    .replace(/-/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function isRecent(dateString) {
-  const cutoff = Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
-  return new Date(dateString).getTime() >= cutoff;
-}
-
-/**
- * Handler
- */
 export default async function handler(req, res) {
+  // HARD disable all caching (critical for Brevo)
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+
   try {
-    const response = await fetch(SITEMAP_URL, {
-      headers: {
-        "User-Agent": "Gosswiler-RSS-Generator/1.0"
-      }
-    });
+    const sitemapUrl = "https://www.gosswiler.com/sitemap.xml";
 
-    if (!response.ok) {
-      throw new Error("Failed to fetch sitemap.xml");
-    }
+    const xml = await fetch(sitemapUrl).then(r => r.text());
 
-    const xml = await response.text();
-    const $ = load(xml, { xmlMode: true });
+    // extract URLs + lastmod from sitemap
+    const urls = [...xml.matchAll(/<loc>(.*?)<\/loc>[\s\S]*?<lastmod>(.*?)<\/lastmod>/g)]
+      .map(m => ({
+        url: m[1],
+        lastmod: m[2]
+      }))
+      .filter(x => x.url.includes("/blog/") && !x.url.endsWith("/blog/"));
 
-    let posts = [];
+    if (!urls.length) throw new Error("No blog entries found");
 
-    $("url").each((_, el) => {
-      const loc = $(el).find("loc").text().trim();
-      const lastmod = $(el).find("lastmod").text().trim();
+    // newest first
+    urls.sort((a, b) => new Date(b.lastmod) - new Date(a.lastmod));
 
-      if (
-        loc.startsWith("https://www.gosswiler.com/blog/") &&
-        !loc.endsWith("/blog/") &&
-        lastmod &&
-        isRecent(lastmod)
-      ) {
-        const slug = loc.split("/").filter(Boolean).pop();
+    const items = urls.slice(0, 20).map(post => {
+      const slug = post.url.split("/").filter(Boolean).pop();
+      const title = slug
+        .replace(/-/g, " ")
+        .replace(/\b\w/g, c => c.toUpperCase());
 
-        posts.push({
-          url: loc,
-          slug,
-          title: humanizeSlug(slug),
-          lastmod
-        });
-      }
-    });
-
-    if (posts.length === 0) {
-      throw new Error("No blog posts found in sitemap");
-    }
-
-    // Newest first
-    posts.sort(
-      (a, b) => new Date(b.lastmod) - new Date(a.lastmod)
-    );
-
-    const items = posts.slice(0, MAX_ITEMS).map((p) => `
+      return `
 <item>
-  <title><![CDATA[${p.title}]]></title>
-  <link>${p.url}</link>
-  <guid isPermaLink="true">${p.url}</guid>
-  <pubDate>${new Date(p.lastmod).toUTCString()}</pubDate>
-  <description><![CDATA[
-  New blog post on gosswiler.com — click to read.
-  ]]></description>
-</item>`).join("");
+  <title><![CDATA[${title}]]></title>
+  <link>${post.url}</link>
+  <guid isPermaLink="true">${post.url}</guid>
+  <pubDate>${new Date(post.lastmod).toUTCString()}</pubDate>
+  <description><![CDATA[New blog post on gosswiler.com — click to read.]]></description>
+</item>`;
+    }).join("");
 
     const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
-  <title>${SITE_TITLE}</title>
-  <link>${SITE_LINK}</link>
-  <description>${SITE_DESCRIPTION}</description>
-  <language>${LANGUAGE}</language>
-  ${items}
+<title>Gosswiler Blog</title>
+<link>https://www.gosswiler.com/blog/</link>
+<description>Latest blog posts from gosswiler.com</description>
+<language>en</language>
+${items}
 </channel>
 </rss>`;
 
