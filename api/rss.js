@@ -1,75 +1,112 @@
-import fetch from "node-fetch";
-import { XMLParser } from "fast-xml-parser";
+import { load } from "cheerio";
 
-const SITE = "https://www.gosswiler.com";
-const SITEMAP = `${SITE}/sitemap.xml`;
+/**
+ * CONFIG
+ */
+const SITEMAP_URL = "https://www.gosswiler.com/sitemap.xml";
+const SITE_TITLE = "Gosswiler Blog";
+const SITE_LINK = "https://www.gosswiler.com/blog/";
+const SITE_DESCRIPTION = "Latest blog posts from gosswiler.com";
+const LANGUAGE = "en";
 
+// Only include posts newer than X days (safety net)
+const MAX_AGE_DAYS = 120;
+// Max number of items in feed
+const MAX_ITEMS = 20;
+
+/**
+ * Helpers
+ */
+function humanizeSlug(slug) {
+  return slug
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function isRecent(dateString) {
+  const cutoff = Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  return new Date(dateString).getTime() >= cutoff;
+}
+
+/**
+ * Handler
+ */
 export default async function handler(req, res) {
   try {
-    const parser = new XMLParser();
-
-    async function loadSitemap(url) {
-      const xml = await fetch(url).then(r => r.text());
-      return parser.parse(xml);
-    }
-
-    // Load main sitemap
-    const root = await loadSitemap(SITEMAP);
-
-    let urls = [];
-
-    // Case 1: sitemap index
-    if (root.sitemapindex?.sitemap) {
-      for (const sm of root.sitemapindex.sitemap) {
-        const child = await loadSitemap(sm.loc);
-        if (child.urlset?.url) {
-          urls.push(...child.urlset.url.map(u => u.loc));
-        }
+    const response = await fetch(SITEMAP_URL, {
+      headers: {
+        "User-Agent": "Gosswiler-RSS-Generator/1.0"
       }
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch sitemap.xml");
     }
 
-    // Case 2: plain sitemap
-    if (root.urlset?.url) {
-      urls.push(...root.urlset.url.map(u => u.loc));
+    const xml = await response.text();
+    const $ = load(xml, { xmlMode: true });
+
+    let posts = [];
+
+    $("url").each((_, el) => {
+      const loc = $(el).find("loc").text().trim();
+      const lastmod = $(el).find("lastmod").text().trim();
+
+      if (
+        loc.startsWith("https://www.gosswiler.com/blog/") &&
+        !loc.endsWith("/blog/") &&
+        lastmod &&
+        isRecent(lastmod)
+      ) {
+        const slug = loc.split("/").filter(Boolean).pop();
+
+        posts.push({
+          url: loc,
+          slug,
+          title: humanizeSlug(slug),
+          lastmod
+        });
+      }
+    });
+
+    if (posts.length === 0) {
+      throw new Error("No blog posts found in sitemap");
     }
 
-    // Filter blog posts
-    const blogPosts = urls.filter(u =>
-      u.includes("/blog/")
+    // Newest first
+    posts.sort(
+      (a, b) => new Date(b.lastmod) - new Date(a.lastmod)
     );
 
-    if (!blogPosts.length) {
-      throw new Error("No blog entries found");
-    }
-
-    blogPosts.sort((a, b) => new Date(b) - new Date(a));
-
-    const items = blogPosts.slice(0, 10).map(url => `
+    const items = posts.slice(0, MAX_ITEMS).map((p) => `
 <item>
-<title>${url.split("/").filter(Boolean).pop().replace(/-/g," ")}</title>
-<link>${url}</link>
-<guid>${url}</guid>
-</item>
-`).join("");
+  <title><![CDATA[${p.title}]]></title>
+  <link>${p.url}</link>
+  <guid isPermaLink="true">${p.url}</guid>
+  <pubDate>${new Date(p.lastmod).toUTCString()}</pubDate>
+  <description><![CDATA[
+  New blog post on gosswiler.com — click to read.
+  ]]></description>
+</item>`).join("");
 
     const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
-<title>Gosswiler Blog</title>
-<link>${SITE}</link>
-<description>Latest blog posts</description>
-${items}
+  <title>${SITE_TITLE}</title>
+  <link>${SITE_LINK}</link>
+  <description>${SITE_DESCRIPTION}</description>
+  <language>${LANGUAGE}</language>
+  ${items}
 </channel>
 </rss>`;
 
-    res.setHeader("Content-Type", "application/xml");
+    res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
     res.status(200).send(rss);
 
-  } catch (e) {
-    console.error(e);
+  } catch (err) {
     res.status(500).json({
       ok: false,
-      error: e.message
+      error: err.message
     });
   }
 }
