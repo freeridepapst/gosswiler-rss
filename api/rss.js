@@ -1,51 +1,45 @@
 export default async function handler(req, res) {
   try {
-    const sitemapUrl = "https://www.gosswiler.com/sitemap.xml";
+    const BLOG_INDEX = "https://www.gosswiler.com/blog/";
 
-    const response = await fetch(sitemapUrl, {
+    const html = await fetch(BLOG_INDEX, {
       headers: {
         "User-Agent": "Mozilla/5.0"
       }
-    });
+    }).then(r => r.text());
 
-    if (!response.ok) {
-      throw new Error("Could not load sitemap");
-    }
+    // grab blog links
+    const matches = [...html.matchAll(/href="(\/blog\/[^"]+\/)"/g)];
 
-    const xml = await response.text();
+    const urls = [...new Set(matches.map(m => "https://www.gosswiler.com" + m[1]))]
+      .filter(u => !u.endsWith("/blog/"))
+      .slice(0, 15);
 
-    const urls = [...xml.matchAll(/<loc>(.*?)<\/loc>/g)]
-      .map(m => m[1])
-      .filter(u => u.includes("/blog/") && !u.endsWith("/blog/"));
+    if (!urls.length) throw new Error("No blog links");
 
-    if (!urls.length) {
-      return res.json({ ok: false, error: "No blog posts" });
-    }
-
-    // newest last
-    const latest = urls[urls.length - 1];
+    const items = urls.map(url => `
+      <item>
+        <title><![CDATA[${url.split("/").slice(-2, -1)[0].replace(/-/g," ")}]]></title>
+        <link>${url}</link>
+        <guid>${url}</guid>
+        <description><![CDATA[New blog post on gosswiler.com — click to read.]]></description>
+      </item>
+    `).join("");
 
     const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
 <title>Gosswiler Blog</title>
 <link>https://www.gosswiler.com/blog/</link>
-<description>Latest blog posts</description>
-
-<item>
-<title>New blog post</title>
-<link>${latest}</link>
-<guid>${latest}</guid>
-<description>New blog post on gosswiler.com</description>
-</item>
-
+<description>Latest blog posts from gosswiler.com</description>
+${items}
 </channel>
 </rss>`;
 
-    res.setHeader("Content-Type", "application/rss+xml");
-    res.send(rss);
+    res.setHeader("Content-Type", "application/xml");
+    res.status(200).send(rss);
 
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok:false, error: err.message });
   }
 }
