@@ -1,63 +1,52 @@
-import { load } from "cheerio";
-
 export default async function handler(req, res) {
   try {
-    const FEED_URL = "https://www.gosswiler.com/feed/";
+    const sitemapUrl = "https://www.gosswiler.com/sitemap.xml?nocache=1";
 
-    const r = await fetch(FEED_URL, {
+    const response = await fetch(sitemapUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0",
-        "Accept": "application/xml"
+        Accept: "application/xml"
       }
     });
 
-    if (!r.ok) {
-      return res.status(500).json({ ok: false, error: "Could not load atom feed" });
-    }
+    const xml = await response.text();
 
-    const xml = await r.text();
+    // extract all loc entries (ignore lastmod completely)
+    const urls = [...xml.matchAll(/<loc>(.*?)<\/loc>/g)]
+      .map(m => m[1].trim())
+      .filter(u => u.includes("/blog/") && u !== "https://www.gosswiler.com/blog/");
 
-    const $ = load(xml, { xmlMode: true });
+    if (!urls.length) throw new Error("No blog posts");
 
-    const entries = $("entry");
+    // newest is LAST in imagevuex sitemap
+    const newest = urls[urls.length - 1];
 
-    if (!entries.length) {
-      return res.status(500).json({ ok: false, error: "No entries in atom feed" });
-    }
-
-    const items = [];
-
-    entries.each((i, el) => {
-      if (i >= 20) return false; // reicht für Brevo
-
-      const title = $(el).find("title").text();
-      const link = $(el).find("link").attr("href");
-      const date = $(el).find("updated").text();
-
-      if (!link.includes("/blog/")) return;
-
-      items.push(`
-<item>
-<title><![CDATA[${title}]]></title>
-<link>${link}</link>
-<guid>${link}</guid>
-<pubDate>${new Date(date).toUTCString()}</pubDate>
-<description><![CDATA[New blog post on gosswiler.com — click to read.]]></description>
-</item>
-`);
-    });
+    const title = newest
+      .split("/")
+      .filter(Boolean)
+      .pop()
+      .replace(/-/g, " ");
 
     const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
 <title>Gosswiler Blog</title>
 <link>https://www.gosswiler.com/blog/</link>
-<description>Latest blog posts from gosswiler.com</description>
-${items.join("")}
+<description>Latest blog post</description>
+
+<item>
+<title><![CDATA[${title}]]></title>
+<link>${newest}</link>
+<guid>${newest}</guid>
+<description><![CDATA[New blog post on gosswiler.com]]></description>
+</item>
+
 </channel>
 </rss>`;
 
-    res.setHeader("Content-Type", "application/xml");
+    res.setHeader("Content-Type", "application/rss+xml");
+    res.setHeader("Cache-Control", "no-store");
+
     res.status(200).send(rss);
 
   } catch (e) {
