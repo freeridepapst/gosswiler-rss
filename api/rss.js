@@ -1,50 +1,40 @@
-import { XMLParser } from "fast-xml-parser";
-
 export default async function handler(req, res) {
   try {
     const SITEMAP = "https://www.gosswiler.com/sitemap.xml";
 
     const response = await fetch(SITEMAP, {
-      cache: "no-store"
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
     });
 
     if (!response.ok) {
-      throw new Error("Sitemap fetch failed");
+      throw new Error("Could not load sitemap");
     }
 
     const xml = await response.text();
 
-    const parser = new XMLParser();
-    const parsed = parser.parse(xml);
-
-    let urls = parsed?.urlset?.url || [];
-
-    if (!Array.isArray(urls)) urls = [urls];
-
-    const blogPosts = urls
-      .filter(u => u.loc.includes("/blog/"))
-      .map(u => ({
-        url: u.loc,
-        lastmod: u.lastmod || new Date().toISOString()
+    // extract <loc> + <lastmod>
+    const urls = [...xml.matchAll(/<loc>(.*?)<\/loc>\s*<lastmod>(.*?)<\/lastmod>/g)]
+      .map(m => ({
+        url: m[1],
+        date: m[2]
       }))
-      .sort((a, b) => new Date(b.lastmod) - new Date(a.lastmod))
-      .slice(0, 15);
+      .filter(e => e.url.includes("/blog/"))
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 20);
 
-    if (!blogPosts.length) {
-      return res.status(200).json({
-        ok: false,
-        error: "No blog entries found",
-        sitemapCount: urls.length
-      });
+    if (!urls.length) {
+      throw new Error("No blog entries found");
     }
 
-    const items = blogPosts.map(post => `
+    const items = urls.map(post => `
 <item>
-  <title>${post.url.split("/").filter(Boolean).pop().replace(/-/g," ")}</title>
-  <link>${post.url}</link>
-  <guid>${post.url}</guid>
-  <pubDate>${new Date(post.lastmod).toUTCString()}</pubDate>
-  <description>New blog post on gosswiler.com</description>
+<title>${post.url.split("/").filter(Boolean).pop().replace(/-/g, " ")}</title>
+<link>${post.url}</link>
+<guid>${post.url}</guid>
+<pubDate>${new Date(post.date).toUTCString()}</pubDate>
+<description>New blog post on gosswiler.com</description>
 </item>
 `).join("");
 
@@ -54,6 +44,7 @@ export default async function handler(req, res) {
 <title>Gosswiler Blog</title>
 <link>https://www.gosswiler.com/blog/</link>
 <description>Latest blog posts</description>
+<language>de</language>
 ${items}
 </channel>
 </rss>`;
@@ -64,11 +55,9 @@ ${items}
     res.status(200).send(rss);
 
   } catch (err) {
-    console.error("RSS ERROR:", err);
-
-    res.status(200).json({
+    res.status(500).json({
       ok: false,
-      message: err.message
+      error: err.message
     });
   }
 }
