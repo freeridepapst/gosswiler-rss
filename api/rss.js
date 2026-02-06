@@ -1,79 +1,74 @@
-import RSS from "rss";
 import { XMLParser } from "fast-xml-parser";
-
-export const config = {
-  runtime: "nodejs",
-};
 
 export default async function handler(req, res) {
   try {
-    console.log("RSS generation started");
+    const SITEMAP = "https://www.gosswiler.com/sitemap.xml";
 
-    // Disable ALL caching
-    res.setHeader("Cache-Control", "no-store");
-
-    const sitemapUrl = "https://www.gosswiler.com/sitemap.xml";
-
-    const sitemapResponse = await fetch(sitemapUrl, {
-      headers: {
-        "User-Agent": "gosswiler-rss",
-        "Cache-Control": "no-cache",
-      },
+    const response = await fetch(SITEMAP, {
+      cache: "no-store"
     });
 
-    if (!sitemapResponse.ok) {
-      throw new Error("Failed to fetch sitemap");
+    if (!response.ok) {
+      throw new Error("Sitemap fetch failed");
     }
 
-    const xml = await sitemapResponse.text();
+    const xml = await response.text();
 
     const parser = new XMLParser();
-    const sitemap = parser.parse(xml);
+    const parsed = parser.parse(xml);
 
-    const urls =
-      sitemap?.urlset?.url
-        ?.map((u) => u.loc)
-        ?.filter((u) => u.includes("/blog/")) || [];
+    let urls = parsed?.urlset?.url || [];
 
-    console.log("Found blog URLs:", urls.length);
+    if (!Array.isArray(urls)) urls = [urls];
 
-    if (!urls.length) {
+    const blogPosts = urls
+      .filter(u => u.loc.includes("/blog/"))
+      .map(u => ({
+        url: u.loc,
+        lastmod: u.lastmod || new Date().toISOString()
+      }))
+      .sort((a, b) => new Date(b.lastmod) - new Date(a.lastmod))
+      .slice(0, 15);
+
+    if (!blogPosts.length) {
       return res.status(200).json({
         ok: false,
         error: "No blog entries found",
+        sitemapCount: urls.length
       });
     }
 
-    const feed = new RSS({
-      title: "Gosswiler Blog",
-      description: "Latest blog posts from gosswiler.com",
-      site_url: "https://www.gosswiler.com",
-      feed_url: "https://gosswiler-rss.vercel.app/api/rss",
-      language: "de",
-    });
+    const items = blogPosts.map(post => `
+<item>
+  <title>${post.url.split("/").filter(Boolean).pop().replace(/-/g," ")}</title>
+  <link>${post.url}</link>
+  <guid>${post.url}</guid>
+  <pubDate>${new Date(post.lastmod).toUTCString()}</pubDate>
+  <description>New blog post on gosswiler.com</description>
+</item>
+`).join("");
 
-    for (const url of urls.slice(0, 20)) {
-      try {
-        feed.item({
-          title: url.split("/").filter(Boolean).pop().replace(/-/g, " "),
-          url,
-          guid: url,
-          description: "New blog post on gosswiler.com",
-          date: new Date(),
-        });
-      } catch (itemError) {
-        console.log("Item error:", url);
-      }
-    }
+    const rss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+<title>Gosswiler Blog</title>
+<link>https://www.gosswiler.com/blog/</link>
+<description>Latest blog posts</description>
+${items}
+</channel>
+</rss>`;
 
-    res.setHeader("Content-Type", "application/xml");
-    res.status(200).send(feed.xml({ indent: true }));
-  } catch (e) {
-    console.error("RSS ERROR:", e);
+    res.setHeader("Content-Type", "application/rss+xml");
+    res.setHeader("Cache-Control", "no-store");
 
-    return res.status(200).json({
+    res.status(200).send(rss);
+
+  } catch (err) {
+    console.error("RSS ERROR:", err);
+
+    res.status(200).json({
       ok: false,
-      error: e.message,
+      message: err.message
     });
   }
 }
