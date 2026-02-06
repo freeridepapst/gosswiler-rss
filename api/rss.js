@@ -1,57 +1,56 @@
 export default async function handler(req, res) {
   try {
-    const SITEMAP = "https://www.gosswiler.com/sitemap.xml";
+    const sitemapUrl = "https://www.gosswiler.com/sitemap.xml?nocache=1";
 
-    const response = await fetch(SITEMAP, {
+    const response = await fetch(sitemapUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0"
-      }
+        "User-Agent": "Mozilla/5.0 (RSS Bot)",
+        "Accept": "application/xml,text/xml"
+      },
+      cache: "no-store"
     });
 
     if (!response.ok) {
-      throw new Error("Could not load sitemap");
+      throw new Error("Sitemap fetch failed");
     }
 
     const xml = await response.text();
 
-    // extract <loc> + <lastmod>
-    const urls = [...xml.matchAll(/<loc>(.*?)<\/loc>\s*<lastmod>(.*?)<\/lastmod>/g)]
-      .map(m => ({
-        url: m[1],
-        date: m[2]
-      }))
-      .filter(e => e.url.includes("/blog/"))
-      .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .slice(0, 20);
+    if (!xml.includes("<urlset")) {
+      throw new Error("Invalid XML (Cloudflare page)");
+    }
+
+    const urls = [...xml.matchAll(/<loc>(.*?)<\/loc>/g)]
+      .map(m => m[1])
+      .filter(u => u.includes("/blog/") && !u.match(/\.(jpg|png|webp)$/));
 
     if (!urls.length) {
       throw new Error("No blog entries found");
     }
 
-    const items = urls.map(post => `
+    const items = urls.slice(0, 20).map(link => {
+      const slug = link.split("/").filter(Boolean).pop().replace(/-/g, " ");
+
+      return `
 <item>
-<title>${post.url.split("/").filter(Boolean).pop().replace(/-/g, " ")}</title>
-<link>${post.url}</link>
-<guid>${post.url}</guid>
-<pubDate>${new Date(post.date).toUTCString()}</pubDate>
-<description>New blog post on gosswiler.com</description>
-</item>
-`).join("");
+<title><![CDATA[${slug}]]></title>
+<link>${link}</link>
+<guid>${link}</guid>
+<description><![CDATA[New blog post on gosswiler.com — click to read.]]></description>
+</item>`;
+    });
 
     const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
 <title>Gosswiler Blog</title>
 <link>https://www.gosswiler.com/blog/</link>
-<description>Latest blog posts</description>
-<language>de</language>
-${items}
+<description>Latest blog posts from gosswiler.com</description>
+${items.join("\n")}
 </channel>
 </rss>`;
 
     res.setHeader("Content-Type", "application/rss+xml");
-    res.setHeader("Cache-Control", "no-store");
-
     res.status(200).send(rss);
 
   } catch (err) {
