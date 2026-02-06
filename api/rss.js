@@ -4,59 +4,61 @@ export default async function handler(req, res) {
 
     const response = await fetch(sitemapUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (RSS Bot)",
-        "Accept": "application/xml,text/xml"
-      },
-      cache: "no-store"
+        "User-Agent": "Mozilla/5.0",
+        Accept: "application/xml"
+      }
     });
-
-    if (!response.ok) {
-      throw new Error("Sitemap fetch failed");
-    }
 
     const xml = await response.text();
 
-    if (!xml.includes("<urlset")) {
-      throw new Error("Invalid XML (Cloudflare page)");
-    }
+    // extract loc + lastmod
+    const matches = [...xml.matchAll(
+      /<loc>(.*?)<\/loc>\s*<lastmod>(.*?)<\/lastmod>/g
+    )];
 
-    const urls = [...xml.matchAll(/<loc>(.*?)<\/loc>/g)]
-      .map(m => m[1])
-      .filter(u => u.includes("/blog/") && !u.match(/\.(jpg|png|webp)$/));
+    const posts = matches
+      .map(m => ({
+        url: m[1],
+        date: m[2]
+      }))
+      .filter(p => p.url.match(/\/blog\/.+\//))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-    if (!urls.length) {
-      throw new Error("No blog entries found");
-    }
+    if (!posts.length) throw new Error("No blog posts");
 
-    const items = urls.slice(0, 20).map(link => {
-      const slug = link.split("/").filter(Boolean).pop().replace(/-/g, " ");
+    // ONLY newest post
+    const post = posts[0];
 
-      return `
-<item>
-<title><![CDATA[${slug}]]></title>
-<link>${link}</link>
-<guid>${link}</guid>
-<description><![CDATA[New blog post on gosswiler.com — click to read.]]></description>
-</item>`;
-    });
+    const title = post.url
+      .split("/")
+      .filter(Boolean)
+      .pop()
+      .replace(/-/g, " ");
 
     const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
 <title>Gosswiler Blog</title>
 <link>https://www.gosswiler.com/blog/</link>
-<description>Latest blog posts from gosswiler.com</description>
-${items.join("\n")}
+<description>Latest post</description>
+
+<item>
+<title><![CDATA[${title}]]></title>
+<link>${post.url}</link>
+<guid>${post.url}</guid>
+<pubDate>${new Date(post.date).toUTCString()}</pubDate>
+<description><![CDATA[New blog post on gosswiler.com]]></description>
+</item>
+
 </channel>
 </rss>`;
 
     res.setHeader("Content-Type", "application/rss+xml");
+    res.setHeader("Cache-Control", "no-store");
+
     res.status(200).send(rss);
 
-  } catch (err) {
-    res.status(500).json({
-      ok: false,
-      error: err.message
-    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 }
