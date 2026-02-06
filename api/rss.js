@@ -11,25 +11,17 @@ export default async function handler(req, res) {
 
     const xml = await response.text();
 
-    // extract loc + lastmod
-    const matches = [...xml.matchAll(
-      /<loc>(.*?)<\/loc>\s*<lastmod>(.*?)<\/lastmod>/g
-    )];
+    // extract all loc entries (ignore lastmod completely)
+    const urls = [...xml.matchAll(/<loc>(.*?)<\/loc>/g)]
+      .map(m => m[1].trim())
+      .filter(u => u.includes("/blog/") && u !== "https://www.gosswiler.com/blog/");
 
-    const posts = matches
-      .map(m => ({
-        url: m[1],
-        date: m[2]
-      }))
-      .filter(p => p.url.match(/\/blog\/.+\//))
-      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    if (!urls.length) throw new Error("No blog posts");
 
-    if (!posts.length) throw new Error("No blog posts");
+    // newest is LAST in imagevuex sitemap
+    const newest = urls[urls.length - 1];
 
-    // ONLY newest post
-    const post = posts[0];
-
-    const title = post.url
+    const title = newest
       .split("/")
       .filter(Boolean)
       .pop()
@@ -40,13 +32,12 @@ export default async function handler(req, res) {
 <channel>
 <title>Gosswiler Blog</title>
 <link>https://www.gosswiler.com/blog/</link>
-<description>Latest post</description>
+<description>Latest blog post</description>
 
 <item>
 <title><![CDATA[${title}]]></title>
-<link>${post.url}</link>
-<guid>${post.url}</guid>
-<pubDate>${new Date(post.date).toUTCString()}</pubDate>
+<link>${newest}</link>
+<guid>${newest}</guid>
 <description><![CDATA[New blog post on gosswiler.com]]></description>
 </item>
 
